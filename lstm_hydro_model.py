@@ -38,7 +38,7 @@ def load_data(basin_list, start_date, end_date, scaler):
 
     n = 0
     for basin_id in basin_list:
-        data = pd.read_csv(f'data/regional_lstm/processed_lstm_input/pb0/lstm_input{basin_id}.csv')
+        data = pd.read_csv(f'data/lstm_input{basin_id}.csv')
         data = data.drop(columns=['date'])
         # data_size = len(data)
         features[n:n+n_days_train, :] = data.iloc[:n_days_train, :29].values # 29 features
@@ -107,7 +107,7 @@ n_total_days = len(basin_list) * n_days_train
 features = np.zeros((n_total_days, NUM_INPUT_FEATURES), dtype=np.float32)
 n = 0
 for basin_id in basin_list:
-    data = pd.read_csv(f'data/regional_lstm/processed_lstm_input/pb0/lstm_input{basin_id}.csv')
+    data = pd.read_csv(f'data/lstm_input{basin_id}.csv')
     data = data.drop(columns=['date'])
     features[n:n+n_days_train, :] = data.iloc[:n_days_train, :29].values
     n += n_days_train
