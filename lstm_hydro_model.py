@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import date
 import time
 from sklearn.preprocessing import StandardScaler
@@ -18,7 +19,7 @@ NUM_EPOCHS = 30
 NUM_HIDDEN_LAYERS = 1
 SEQUENCE_LENGTH = 365
 NUM_HIDDEN_NEURONS = 256
-BATCH_SIZE = 24
+BATCH_SIZE = 64
 LEARNING_RATE = 0.0005
 DROPOUT_RATE = 0.4
 
@@ -38,7 +39,7 @@ def load_data(basin_list, start_date, end_date, scaler):
 
     n = 0
     for basin_id in basin_list:
-        data = pd.read_csv(f'data/lstm_input{basin_id}.csv')
+        data = data = pd.read_csv(f'data/lstm_input{basin_id}.csv')
         data = data.drop(columns=['date'])
         # data_size = len(data)
         features[n:n+n_days_train, :] = data.iloc[:n_days_train, :29].values # 29 features
@@ -83,8 +84,8 @@ class LSTMModel(nn.Module):
 # Dataset Class
 class SeqDataset(Dataset):
     def __init__(self, x, y):
-        self.x = torch.from_numpy(x)
-        self.y = torch.from_numpy(y)
+        self.x = torch.from_numpy(x).float()
+        self.y = torch.from_numpy(y).float()
         self.n_samples = x.shape[0]
 
     def __getitem__(self, index):
@@ -93,21 +94,24 @@ class SeqDataset(Dataset):
     def __len__(self):
         return self.n_samples
 
+###--STEP 1: TRAINING THE MODEL--###
 #### Train the model for training period
 set_seed(1000000)
 
 # Dates and basins for training
+# basin_list = ['01095375', '01096000', '01097000', '01103280', '01104500', '01105000']
+basin_list = pd.read_csv("MA_basins_list.csv", dtype={'basin_id':str})['basin_id'].values
 start_date = date(2000, 1, 1)
 end_date = date(2013, 12, 31)
-basin_list = ['01095375', '01096000', '01097000', '01103280', '01104500', '01105000']
-
-#Get standard scaler from training data
 n_days_train = (end_date - start_date).days + 1
 n_total_days = len(basin_list) * n_days_train
+
+
+#Get standard scaler from training data
 features = np.zeros((n_total_days, NUM_INPUT_FEATURES), dtype=np.float32)
 n = 0
 for basin_id in basin_list:
-    data = pd.read_csv(f'data/lstm_input{basin_id}.csv')
+    data = data = pd.read_csv(f'data/lstm_input{basin_id}.csv')
     data = data.drop(columns=['date'])
     features[n:n+n_days_train, :] = data.iloc[:n_days_train, :29].values
     n += n_days_train
@@ -148,38 +152,83 @@ for epoch in range(NUM_EPOCHS):
 
 # Save the model
 torch.save(model.state_dict(), 'lstm_model.pth')
+print(f'Total time taken to training: {time.time() - start_time:.2f} seconds')
 
 
-#### Test the model for testing period
+##--STEP 2: TESTING THE MODEL--###
+### 2.1: extract basin by basin model predictions
 
-start_date = date(2014, 1, 1)
-end_date = date(2020, 12, 31)
+start_date = date(2000,1,1)
+end_date = date(2020,12,31)
 
-features, targets = load_data(basin_list, start_date, end_date, scaler)
-x_seq, y_seq = create_sequences(features, targets, SEQUENCE_LENGTH)
+for basin_id in basin_list:
+    #read data for a basin
+    data = pd.read_csv(f'data/lstm_input{basin_id}.csv').drop(columns=['date'])
+    #last column is the target otherwise features
+    features = data.iloc[:, :29].values
+    targets = data.iloc[:, [-1]].values
+    #standardize features with training data scaler
+    features = scaler.transform(features)
 
-test_dataset = SeqDataset(x_seq, y_seq)
-test_loader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    #create sequences
+    x_seq, y_seq = create_sequences(features, targets, SEQUENCE_LENGTH)
+    prediction_dataset = SeqDataset(x_seq, y_seq)
+    prediction_loader = DataLoader(dataset=prediction_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-model = LSTMModel(NUM_INPUT_FEATURES, NUM_HIDDEN_NEURONS, NUM_HIDDEN_LAYERS, NUM_OUTPUT_FEATURES, DROPOUT_RATE).to(device)
-model.load_state_dict(torch.load('lstm_model.pth'))
-model.eval()
+    #load model
+    model = LSTMModel(NUM_INPUT_FEATURES, NUM_HIDDEN_NEURONS, NUM_HIDDEN_LAYERS, NUM_OUTPUT_FEATURES, DROPOUT_RATE).to(device)
+    model.load_state_dict(torch.load('lstm_model.pth'))
+    model.eval()
+    #make prediction and save to csv
+    all_outputs, all_targets = [], []
+    with torch.no_grad():
+        for inputs, target in prediction_loader:
+            inputs, target = inputs.to(device), target.to(device)
+            output = model(inputs)
+            all_outputs.append(output.cpu().numpy())
+            all_targets.append(target.cpu().numpy())
+    all_outputs = np.concatenate(all_outputs).flatten()
+    all_targets = np.concatenate(all_targets).flatten()
+    #save to csv
+    date_range = pd.date_range(start=start_date, end=end_date).strftime('%Y-%m-%d')
+    prediction = pd.DataFrame({'date': date_range[SEQUENCE_LENGTH-1:], 'observed': all_targets, 'predicted': all_outputs})
+    prediction.to_csv(f'output/lstm_output{basin_id}.csv', index=False)
 
-all_outputs, all_targets = [], []
-with torch.no_grad():
-    for inputs, target in test_loader:
-        inputs, target = inputs.to(device), target.to(device)
-        output = model(inputs)
-        all_outputs.append(output.cpu().numpy())
-        all_targets.append(target.cpu().numpy())
-all_outputs = np.concatenate(all_outputs).flatten()
-all_targets = np.concatenate(all_targets).flatten()
+print(f'Total time taken to prediction: {time.time() - start_time:.2f} seconds')
 
-#find test nse values for each basin
-n_days_test = (end_date - start_date).days + 1
-test_basin_size = n_days_test
-for i in range(len(basin_list)):
-    test_basin_outputs = all_outputs[i*test_basin_size:(i+1)*test_basin_size]
-    test_basin_targets = all_targets[i*test_basin_size:(i+1)*test_basin_size]
-    nse = 1 - np.sum((test_basin_outputs-test_basin_targets)**2)/np.sum((test_basin_targets-np.mean(test_basin_targets))**2)
-    print(f'Basin {basin_list[i]} NSE: {nse}')
+
+#### 2.2: calculate NSE values for each basin for training and testing periods
+train_start_date, train_end_date = '2000-01-01', '2013-12-31'
+test_start_date, test_end_date = '2014-01-01', '2020-12-31'
+
+nse_train, nse_test = [], []
+# Read in LSTM NSE values for each basin
+for basin_id in basin_list:
+    data = pd.read_csv(f'output/lstm_output{basin_id}.csv')
+    data['date'] = pd.to_datetime(data['date'])
+    #extract for training period
+    train_data = data[(data['date'] >= train_start_date) & (data['date'] <= train_end_date)]
+    #calculate NSE
+    nse = 1 - sum((train_data['observed'] - train_data['predicted'])**2) / sum((train_data['observed'] - np.mean(train_data['observed']))**2)
+    nse_train.append(nse)
+    #extract for testing period
+    test_data = data[(data['date'] >= test_start_date) & (data['date'] <= test_end_date)]
+    #calculate NSE
+    nse = 1 - sum((test_data['observed'] - test_data['predicted'])**2) / sum((test_data['observed'] - np.mean(test_data['observed']))**2)
+    nse_test.append(nse)
+
+# Plot NSE values
+# plt.figure(figsize=(6, 4))
+plt.plot(basin_list, nse_train, 'o-', label='Training NSE')
+plt.plot(basin_list, nse_test, 'o-', label='Testing NSE')
+plt.xlabel('Basin ID')
+plt.ylabel('NSE')
+# plt.ylim(0, 1)
+plt.legend()
+plt.grid(True, linestyle='--', linewidth=0.5)
+plt.xticks(rotation=90)
+plt.title('Regional LSTM Model NSE Values')
+plt.tight_layout()
+plt.show()
+#save the plot
+plt.savefig('nse_plot.png', dpi = 300)
