@@ -99,8 +99,8 @@ class SeqDataset(Dataset):
 set_seed(1000000)
 
 # Dates and basins for training
-# basin_list = ['01095375', '01096000', '01097000', '01103280', '01104500', '01105000']
-basin_list = pd.read_csv("MA_basins_list.csv", dtype={'basin_id':str})['basin_id'].values
+basin_list = ['01095375', '01096000', '01097000', '01103280', '01104500', '01105000']
+# basin_list = pd.read_csv("MA_basins_list.csv", dtype={'basin_id':str})['basin_id'].values
 start_date = date(2000, 1, 1)
 end_date = date(2013, 12, 31)
 n_days_train = (end_date - start_date).days + 1
