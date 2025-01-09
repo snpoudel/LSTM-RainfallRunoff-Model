@@ -120,7 +120,15 @@ scaler.fit(features)
 
 # Load and preprocess data
 features, targets = load_data(basin_list, start_date, end_date, scaler)
-x_seq, y_seq = create_sequences(features, targets, SEQUENCE_LENGTH)
+# x_seq, y_seq = create_sequences(features, targets, SEQUENCE_LENGTH)
+#create sequences for each basin and concatenate, this is done so sequence from different basins are not mixed
+x_seq, y_seq = [], []
+for i in range(len(basin_list)):
+    x, y = create_sequences(features[i*n_days_train:(i+1)*n_days_train], targets[i*n_days_train:(i+1)*n_days_train], SEQUENCE_LENGTH)
+    x_seq.append(x)
+    y_seq.append(y)
+x_seq = np.concatenate(x_seq)
+y_seq = np.concatenate(y_seq)
 
 # Dataset and DataLoader
 train_dataset = SeqDataset(x_seq, y_seq)
